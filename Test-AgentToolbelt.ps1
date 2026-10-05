@@ -25,7 +25,7 @@ $tools = @(
     @{ Name = "npm"; Command = "npm"; Args = @("--version"); Category = "Web"; Capability = "npm-package-manager"; Reason = "Provides the standard Node.js package-management workflow used by many JavaScript and frontend repositories." },
     @{ Name = "pnpm"; Command = "pnpm"; Args = @("--version"); Category = "Web"; Capability = "pnpm-package-manager"; Reason = "Provides efficient dependency management for repositories that use pnpm, including many modern monorepos." },
 
-    @{ Name = "Azure CLI"; Command = "az"; Args = @("version", "--output", "json"); Category = "Azure"; Capability = "azure-cli"; Reason = "Provides scriptable access to Azure resources and services using documented CLI commands." },
+    @{ Name = "Azure CLI"; Command = "az"; Args = @("version", "--output", "json"); VersionProperty = "azure-cli"; Category = "Azure"; Capability = "azure-cli"; Reason = "Provides scriptable access to Azure resources and services using documented CLI commands." },
 
     @{ Name = "GitLab CLI"; Command = "glab"; Args = @("--version"); Category = "GitLab"; Capability = "gitlab-cli"; Reason = "Provides scriptable access to GitLab-specific operations such as merge requests, issues, pipelines, and repository metadata." },
     @{ Name = "GitHub CLI"; Command = "gh"; Args = @("--version"); Category = "GitHub / Optional"; Capability = "github-cli"; Reason = "Provides scriptable access to GitHub-specific operations such as pull requests, issues, workflows, releases, and repository metadata." },
@@ -61,6 +61,11 @@ function Test-Tool {
         }
 
         $version = ($output | Select-Object -First 1 | Out-String).Trim()
+
+        if ($Tool.VersionProperty) {
+            $parsed = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+            $version = [string]$parsed.($Tool.VersionProperty)
+        }
 
         return [PSCustomObject]@{
             Category = $Tool.Category; Tool = $Tool.Name; Command = $Tool.Command
@@ -112,20 +117,58 @@ if ($Explain) {
     }
 }
 
-$coreFailures = $results | Where-Object {
+$coreFailures = @($results | Where-Object {
     $_.Category -eq "Core" -and $_.Status -ne "PASS"
-}
+})
+$otherIssues = @($results | Where-Object {
+    $_.Category -ne "Core" -and
+    $_.Category -ne "Package manager" -and
+    $_.Status -eq "BROKEN"
+})
 
 Write-Host ""
 Write-Host "=========================="
 
-if ($coreFailures) {
+if ($coreFailures.Count -gt 0) {
     Write-Host "Agent CLI Baseline: FAIL"
+}
+else {
+    Write-Host "Agent CLI Baseline: PASS"
+}
+
+Write-Host ""
+Write-Host "Core:"
+if ($coreFailures.Count -eq 0) {
+    Write-Host "  All core capabilities are ready."
+}
+else {
     foreach ($failure in $coreFailures) {
-        Write-Host "  $($failure.Status): $($failure.Capability) ($($failure.Command))"
+        Write-Host ("  {0,-8} {1,-10} {2}" -f $failure.Status, $failure.Command, $failure.Capability)
     }
+}
+
+if ($otherIssues.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Other issues:"
+    foreach ($issue in $otherIssues) {
+        Write-Host ("  {0,-8} {1,-10} {2}" -f $issue.Status, $issue.Command, $issue.Capability)
+    }
+}
+
+Write-Host ""
+Write-Host "Inventory:"
+$results |
+    Where-Object { $_.Category -ne "Package manager" } |
+    Group-Object Category |
+    Sort-Object Name |
+    ForEach-Object {
+        $ready = @($_.Group | Where-Object Status -eq "PASS").Count
+        $total = $_.Count
+        Write-Host ("  {0,-18} {1}/{2} ready" -f $_.Name, $ready, $total)
+    }
+
+if ($coreFailures.Count -gt 0) {
     exit 1
 }
 
-Write-Host "Agent CLI Baseline: PASS"
 exit 0
